@@ -171,7 +171,11 @@ function parseScheduleIntervals(response, scheduleId = "GPV5.1") {
   return intervals;
 }
 
-function formatScheduleIntervals(intervals) {
+function formatScheduleIntervals(intervals, hasData = true) {
+  if (!hasData) {
+    return "⏳ Дані на наступний день будуть доступні пізніше"
+  }
+
   if (!intervals || intervals.length === 0) {
     return "✅ Відключень не заплановано"
   }
@@ -236,26 +240,76 @@ function getQueueFromGraph(info) {
   const queue = getQueueFromGraph(info)
   const address = `${CITY}, ${STREET}, ${HOUSE}`
 
-  // Парсимо графік відключень з fact даних для черги GPV5.1
-  const intervals = parseScheduleIntervals(info, queue)
+  // Парсимо графік відключень для сьогодні
+  const todayIntervals = parseScheduleIntervals(info, queue)
 
-  const now = new Date()
+  // Парсимо графік для завтра
+  const tomorrowKey = info.fact?.today ? String(Number(info.fact.today) + 86400) : null
+  const tomorrowData = tomorrowKey && info.fact?.data?.[tomorrowKey]
+  const hasTomorrowData = !!tomorrowData
+
+  let tomorrowIntervals = []
+  if (hasTomorrowData && tomorrowData[queue]) {
+    const tomorrowResponse = {
+      fact: {
+        today: Number(tomorrowKey),
+        data: {
+          [tomorrowKey]: { [queue]: tomorrowData[queue] }
+        }
+      }
+    }
+    tomorrowIntervals = parseScheduleIntervals(tomorrowResponse, queue)
+  }
+
   const updateTime = getCurrentTime()
+
+  // Форматуємо дати
+  const today = new Date()
+  const tomorrow = new Date(today)
+  tomorrow.setDate(tomorrow.getDate() + 1)
+
+  const formatDate = (date) => {
+    const day = String(date.getDate()).padStart(2, "0")
+    const month = String(date.getMonth() + 1).padStart(2, "0")
+    return `${day}.${month}`
+  }
+
+  const separator = "═".repeat(50)
+
+  let tomorrowText = ""
+  if (hasTomorrowData) {
+    tomorrowText = formatScheduleIntervals(tomorrowIntervals)
+  } else {
+    tomorrowText = "⏳ Графік на завтра ще не доступний (зазвичай з'являється ввечері)"
+  }
 
   const message = [
     `⚡️ <b>Статус електропостачання</b>`,
-    ``,
     `🏠 <b>Адреса:</b> ${address}`,
     `🔢 <b>Черга:</b> ${queue}`,
     ``,
-    `📅 <b>Графік відключень на сьогодні:</b>`,
-    formatScheduleIntervals(intervals),
+    separator,
+    ``,
+    `📅 <b>Графік на сьогодні (${formatDate(today)}):</b>`,
+    ``,
+    formatScheduleIntervals(todayIntervals),
+    ``,
+    separator,
+    ``,
+    `📅 <b>Графік на завтра (${formatDate(tomorrow)}):</b>`,
+    ``,
+    tomorrowText,
+    ``,
+    separator,
     ``,
     `🕐 <i>Оновлено: ${updateTime}</i>`,
   ].filter(line => line !== null && line !== "").join("\n")
 
+  console.log("✉️ Message generated successfully")
   return message
-} async function sendNotification(message) {
+}
+
+async function sendNotification(message) {
   if (!TELEGRAM_BOT_TOKEN)
     throw Error("❌ Missing telegram bot token or chat id.")
   if (!TELEGRAM_CHAT_ID) throw Error("❌ Missing telegram chat id.")
