@@ -261,45 +261,73 @@ function getQueueFromGraph(info) {
   if (!TELEGRAM_CHAT_ID) throw Error("❌ Missing telegram chat id.")
 
   console.log("🌀 Sending notification...")
+  console.log("📨 Message length:", message.length)
 
   const lastMessage = loadLastMessage() || {}
   try {
-    const response = await fetch(
-      `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/${lastMessage.message_id ? "editMessageText" : "sendMessage"
-      }`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: TELEGRAM_CHAT_ID,
-          text: message,
-          parse_mode: "HTML",
-          message_id: lastMessage.message_id ?? undefined,
-        }),
-      }
-    )
+    const endpoint = lastMessage.message_id ? "editMessageText" : "sendMessage"
+    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/${endpoint}`
+    
+    console.log(`📤 Using endpoint: ${endpoint}`)
+    console.log(`💬 Chat ID: ${TELEGRAM_CHAT_ID}`)
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: TELEGRAM_CHAT_ID,
+        text: message,
+        parse_mode: "HTML",
+        message_id: lastMessage.message_id ?? undefined,
+      }),
+    })
 
     const data = await response.json()
-    saveLastMessage(data.result)
+    
+    if (!response.ok) {
+      console.error("🔴 Telegram API error:", data)
+      throw new Error(`Telegram API error: ${data.description}`)
+    }
 
-    console.log("🟢 Notification sent.")
+    if (data.ok && data.result) {
+      saveLastMessage(data.result)
+      console.log("🟢 Notification sent successfully!")
+      console.log("✉️ Message ID:", data.result.message_id)
+    } else {
+      console.error("🔴 Unexpected response:", data)
+      throw new Error("Unexpected Telegram API response")
+    }
   } catch (error) {
-    console.log("🔴 Notification not sent.", error.message)
+    console.error("🔴 Notification not sent:", error.message)
     deleteLastMessage()
+    throw error
   }
 }
 
 async function run() {
-  const info = await getInfo()
-  const message = generateMessage(info)
+  try {
+    console.log("🚀 Starting DTEK Monitor...")
+    const info = await getInfo()
+    
+    console.log("📊 Info received successfully")
+    console.log("🔍 Queue:", info.data?.[HOUSE]?.sub_type_reason?.[0] || "Unknown")
+    
+    const message = generateMessage(info)
+    console.log("✉️ Message generated successfully")
 
-  console.log("\n" + "=".repeat(50))
-  console.log("📨 Повідомлення для відправки:")
-  console.log("=".repeat(50))
-  console.log(message.replace(/<\/?[^>]+(>|$)/g, "")) // Прибираємо HTML теги для консолі
-  console.log("=".repeat(50) + "\n")
+    console.log("\n" + "=".repeat(50))
+    console.log("📨 Повідомлення для відправки:")
+    console.log("=".repeat(50))
+    console.log(message.replace(/<\/?[^>]+(>|$)/g, "")) // Прибираємо HTML теги для консолі
+    console.log("=".repeat(50) + "\n")
 
-  await sendNotification(message)
+    await sendNotification(message)
+    console.log("✅ Script completed successfully!")
+  } catch (error) {
+    console.error("❌ Error occurred:", error.message)
+    console.error("Stack trace:", error.stack)
+    process.exit(1)
+  }
 }
 
 run().catch((error) => console.error(error.message))
