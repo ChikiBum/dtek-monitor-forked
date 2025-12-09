@@ -67,63 +67,195 @@ async function getInfo() {
   }
 }
 
-function checkIsOutage(info) {
-  console.log("🌀 Checking power outage...")
-
-  if (!info?.data) {
-    throw Error("❌ Power outage info missed.")
+function parseScheduleIntervals(response, scheduleId = "GPV5.1") {
+  if (!response || !response.fact || !response.fact.today) {
+    return [];
+  }
+  const todayKey = String(response.fact.today);
+  const dayData = response.fact.data && response.fact.data[todayKey];
+  if (!dayData || !dayData[scheduleId]) {
+    return [];
   }
 
-  const { sub_type, start_date, end_date, type } = info?.data?.[HOUSE] || {}
-  const isOutageDetected =
-    sub_type !== "" || start_date !== "" || end_date !== "" || type !== ""
+  const hourMap = dayData[scheduleId]; // keys "1".."24"
+  // 48 півгодинних слотів, починаючи з 00:00
+  const slots = new Array(48).fill("on"); // values: 'on'|'off'|'possible'|'unknown'
 
-  isOutageDetected
-    ? console.log("🚨 Power outage detected!")
-    : console.log("⚡️ No power outage!")
+  const markHalf = (hourIndex, half, value) => {
+    // hourIndex 1..24, half 0|1
+    const slotIndex = (hourIndex - 1) * 2 + half;
+    slots[slotIndex] = value;
+  };
 
-  return isOutageDetected
-}
+  const mapValueToSlots = (hourIndex, val) => {
+    switch ((val || "").toString()) {
+      case "no":
+        markHalf(hourIndex, 0, "off");
+        markHalf(hourIndex, 1, "off");
+        break;
+      case "yes":
+        markHalf(hourIndex, 0, "on");
+        markHalf(hourIndex, 1, "on");
+        break;
+      case "first":
+        markHalf(hourIndex, 0, "off");
+        markHalf(hourIndex, 1, "on");
+        break;
+      case "second":
+        markHalf(hourIndex, 0, "on");
+        markHalf(hourIndex, 1, "off");
+        break;
+      case "maybe":
+        markHalf(hourIndex, 0, "possible");
+        markHalf(hourIndex, 1, "possible");
+        break;
+      case "mfirst":
+        markHalf(hourIndex, 0, "possible");
+        markHalf(hourIndex, 1, "on");
+        break;
+      case "msecond":
+        markHalf(hourIndex, 0, "on");
+        markHalf(hourIndex, 1, "possible");
+        break;
+      default:
+        markHalf(hourIndex, 0, "unknown");
+        markHalf(hourIndex, 1, "unknown");
+    }
+  };
 
-function checkIsScheduled(info) {
-  console.log("🌀 Checking whether power outage scheduled...")
-
-  if (!info?.data) {
-    throw Error("❌ Power outage info missed.")
+  for (let h = 1; h <= 24; h++) {
+    const val = hourMap[String(h)];
+    mapValueToSlots(h, val);
   }
 
-  const { sub_type } = info?.data?.[HOUSE] || {}
-  const isScheduled = sub_type.toLowerCase().includes("графік")
+  // Функція для форматування слота у час "HH:MM"
+  const fmt = (slotIndex) => {
+    if (slotIndex < 0) slotIndex = 0;
+    if (slotIndex > 48) slotIndex = 48;
+    const hour = Math.floor(slotIndex / 2);
+    const minute = slotIndex % 2 === 0 ? "00" : "30";
+    return `${String(hour).padStart(2, "0")}:${minute}`;
+  };
 
-  isScheduled
-    ? console.log("🗓️ Power outage scheduled!")
-    : console.log("⚠️ Power outage not scheduled!")
+  // Збираємо інтервали для 'off'
+  const intervals = [];
+  let i = 0;
+  while (i < 48) {
+    if (slots[i] === "off") {
+      let start = i;
+      let j = i + 1;
+      while (j < 48 && slots[j] === "off") j++;
+      intervals.push({ start: fmt(start), end: fmt(j), type: "off" });
+      i = j;
+      continue;
+    }
+    i++;
+  }
 
-  return isScheduled
+  // Також додаємо 'possible' інтервали
+  i = 0;
+  while (i < 48) {
+    if (slots[i] === "possible") {
+      let start = i;
+      let j = i + 1;
+      while (j < 48 && slots[j] === "possible") j++;
+      intervals.push({ start: fmt(start), end: fmt(j), type: "possible" });
+      i = j;
+      continue;
+    }
+    i++;
+  }
+
+  // Сортуємо інтервали по часу початку
+  intervals.sort((a, b) => (a.start > b.start ? 1 : a.start < b.start ? -1 : 0));
+  return intervals;
 }
 
-function generateMessage(info) {
+function formatScheduleIntervals(intervals) {
+  if (!intervals || intervals.length === 0) {
+    return "✅ Відключень не заплановано"
+  }
+
+  const offIntervals = intervals.filter(i => i.type === "off")
+  const possibleIntervals = intervals.filter(i => i.type === "possible")
+
+  let result = ""
+
+  if (offIntervals.length > 0) {
+    result += offIntervals.map(i => `🪫 ${i.start} — ${i.end}`).join("\n")
+  }
+
+  if (possibleIntervals.length > 0) {
+    if (result) result += "\n"
+    result += possibleIntervals.map(i => `❓ ${i.start} — ${i.end} (можливо)`).join("\n")
+  }
+
+  return result || "✅ Відключень не заплановано"
+}
+
+function parseFactualOutages(info, house) {
+  // Парсимо фактичні відключення з поля 'fact'
+  const fact = info?.fact?.data || {}
+  const outages = []
+
+  // fact містить timestamp як ключ, в кожному timestamp об'єкт з чергами
+  // Для тепер повертаємо порожній масив (структуру понадобиться обговорити)
+
+  return outages
+}
+
+function formatFactualOutages(outages) {
+  if (!outages || outages.length === 0) {
+    return "✅ Фактичних відключень немає"
+  }
+
+  return outages
+    .slice(0, 5) // Показуємо останні 5
+    .map(outage => {
+      const icon = outage.type.toLowerCase().includes("аварійне") ? "⚠️" :
+        outage.type.toLowerCase().includes("гарантоване") ? "🪫" :
+          "📅"
+      return `${icon} <b>${outage.date}</b> ${outage.from} — ${outage.to}\n   <i>${outage.type}</i>`
+    })
+    .join("\n")
+}
+
+function getQueueFromGraph(info) {
+  const houseData = info?.data?.[HOUSE]
+  if (!houseData?.sub_type_reason || houseData.sub_type_reason.length === 0) {
+    return "Невідомо"
+  }
+  return houseData.sub_type_reason.join(", ")
+} function generateMessage(info) {
   console.log("🌀 Generating message...")
 
-  const { sub_type, start_date, end_date } = info?.data?.[HOUSE] || {}
-  const { updateTimestamp } = info || {}
+  if (!info?.data) {
+    throw Error("❌ Power outage info missed.")
+  }
 
-  const reason = capitalize(sub_type)
-  const begin = start_date.split(" ")[0]
-  const end = end_date.split(" ")[0]
+  const queue = getQueueFromGraph(info)
+  const address = `${CITY}, ${STREET}, ${HOUSE}`
 
-  return [
-    "⚡️ <b>Зафіксовано відключення:</b>",
-    `🪫 <code>${begin} — ${end}</code>`,
-    "",
-    `⚠️ <i>${reason}.</i>`,
-    "\n",
-    `🔄 <i>${updateTimestamp}</i>`,
-    `💬 <i>${getCurrentTime()}</i>`,
-  ].join("\n")
-}
+  // Парсимо графік відключень з fact даних для черги GPV5.1
+  const intervals = parseScheduleIntervals(info, queue)
 
-async function sendNotification(message) {
+  const now = new Date()
+  const updateTime = getCurrentTime()
+
+  const message = [
+    `⚡️ <b>Статус електропостачання</b>`,
+    ``,
+    `🏠 <b>Адреса:</b> ${address}`,
+    `🔢 <b>Черга:</b> ${queue}`,
+    ``,
+    `📅 <b>Графік відключень на сьогодні:</b>`,
+    formatScheduleIntervals(intervals),
+    ``,
+    `🕐 <i>Оновлено: ${updateTime}</i>`,
+  ].filter(line => line !== null && line !== "").join("\n")
+
+  return message
+} async function sendNotification(message) {
   if (!TELEGRAM_BOT_TOKEN)
     throw Error("❌ Missing telegram bot token or chat id.")
   if (!TELEGRAM_CHAT_ID) throw Error("❌ Missing telegram chat id.")
@@ -133,8 +265,7 @@ async function sendNotification(message) {
   const lastMessage = loadLastMessage() || {}
   try {
     const response = await fetch(
-      `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/${
-        lastMessage.message_id ? "editMessageText" : "sendMessage"
+      `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/${lastMessage.message_id ? "editMessageText" : "sendMessage"
       }`,
       {
         method: "POST",
@@ -160,12 +291,15 @@ async function sendNotification(message) {
 
 async function run() {
   const info = await getInfo()
-  const isOutage = checkIsOutage(info)
-  const isScheduled = checkIsScheduled(info)
-  if (isOutage && !isScheduled) {
-    const message = generateMessage(info)
-    await sendNotification(message)
-  }
+  const message = generateMessage(info)
+
+  console.log("\n" + "=".repeat(50))
+  console.log("📨 Повідомлення для відправки:")
+  console.log("=".repeat(50))
+  console.log(message.replace(/<\/?[^>]+(>|$)/g, "")) // Прибираємо HTML теги для консолі
+  console.log("=".repeat(50) + "\n")
+
+  await sendNotification(message)
 }
 
 run().catch((error) => console.error(error.message))
