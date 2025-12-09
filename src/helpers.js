@@ -8,11 +8,15 @@ export function capitalize(str) {
   return str[0].toUpperCase() + str.slice(1).toLowerCase()
 }
 
-export function loadLastMessage() {
-  if (!fs.existsSync(LAST_MESSAGE_FILE)) return null
+export function loadLastMessage(chatId = null) {
+  // Якщо передано chatId, користуємо окремий файл для кожного чату
+  const fileName = chatId ? `last-message-${chatId}.json` : "last-message.json"
+  const filePath = path.join(path.dirname(LAST_MESSAGE_FILE), fileName)
+
+  if (!fs.existsSync(filePath)) return null
 
   const lastMessage = JSON.parse(
-    fs.readFileSync(LAST_MESSAGE_FILE, "utf8").trim()
+    fs.readFileSync(filePath, "utf8").trim()
   )
 
   if (lastMessage?.date) {
@@ -25,7 +29,7 @@ export function loadLastMessage() {
     })
 
     if (messageDay < today) {
-      deleteLastMessage()
+      deleteLastMessage(chatId)
       return null
     }
   }
@@ -33,10 +37,14 @@ export function loadLastMessage() {
   return lastMessage
 }
 
-export function saveLastMessage({ date, message_id } = {}) {
-  fs.mkdirSync(path.dirname(LAST_MESSAGE_FILE), { recursive: true })
+export function saveLastMessage({ date, message_id } = {}, chatId = null) {
+  // Якщо передано chatId, зберігаємо окремо для кожного чату
+  const fileName = chatId ? `last-message-${chatId}.json` : "last-message.json"
+  const filePath = path.join(path.dirname(LAST_MESSAGE_FILE), fileName)
+
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
   fs.writeFileSync(
-    LAST_MESSAGE_FILE,
+    filePath,
     JSON.stringify({
       message_id,
       date,
@@ -44,8 +52,14 @@ export function saveLastMessage({ date, message_id } = {}) {
   )
 }
 
-export function deleteLastMessage() {
-  fs.rmdirSync(path.dirname(LAST_MESSAGE_FILE), { recursive: true })
+export function deleteLastMessage(chatId = null) {
+  // Якщо передано chatId, видаляємо окремо для кожного чату
+  const fileName = chatId ? `last-message-${chatId}.json` : "last-message.json"
+  const filePath = path.join(path.dirname(LAST_MESSAGE_FILE), fileName)
+
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath)
+  }
 }
 
 export function getCurrentTime() {

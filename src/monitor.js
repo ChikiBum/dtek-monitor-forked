@@ -3,6 +3,7 @@ import { chromium } from "playwright"
 import {
   TELEGRAM_BOT_TOKEN,
   TELEGRAM_CHAT_ID,
+  TELEGRAM_CHAT_ID_2,
   CITY,
   STREET,
   HOUSE,
@@ -16,6 +17,30 @@ import {
   loadLastMessage,
   saveLastMessage,
 } from "./helpers.js"
+
+// Визначаємо CHAT_IDs: з параметрів командного рядка або з констант
+const CHAT_IDS = []
+
+// Перший CHAT_ID з параметра або з констант
+if (process.argv[2]) {
+  CHAT_IDS.push(process.argv[2])
+} else if (TELEGRAM_CHAT_ID) {
+  CHAT_IDS.push(TELEGRAM_CHAT_ID)
+}
+
+// Другий CHAT_ID з параметра (якщо передано) або з констант
+if (process.argv[3]) {
+  CHAT_IDS.push(process.argv[3])
+} else if (TELEGRAM_CHAT_ID_2) {
+  CHAT_IDS.push(TELEGRAM_CHAT_ID_2)
+}
+
+if (CHAT_IDS.length === 0) {
+  throw new Error("❌ Не передано TELEGRAM_CHAT_ID! Додайте в .env або передайте як параметр")
+}
+
+console.log(`📱 Відправка в ${CHAT_IDS.length} чат(и): ${CHAT_IDS.join(", ")}`)
+
 
 async function getInfo() {
   console.log("🌀 Getting info...")
@@ -171,13 +196,17 @@ function parseScheduleIntervals(response, scheduleId = "GPV5.1") {
   return intervals;
 }
 
-function formatScheduleIntervals(intervals, hasData = true) {
+function formatScheduleIntervals(intervals, hasData = true, isToday = true) {
   if (!hasData) {
     return "⏳ Дані на наступний день будуть доступні пізніше"
   }
 
   if (!intervals || intervals.length === 0) {
-    return "✅ Відключень не заплановано"
+    if (isToday) {
+      return "✅ Відключень не заплановано"
+    } else {
+      return "⏳ Дані поки що недоступні"
+    }
   }
 
   const offIntervals = intervals.filter(i => i.type === "off")
@@ -194,7 +223,15 @@ function formatScheduleIntervals(intervals, hasData = true) {
     result += possibleIntervals.map(i => `❓ ${i.start} — ${i.end} (можливо)`).join("\n")
   }
 
-  return result || "✅ Відключень не заплановано"
+  if (!result) {
+    if (isToday) {
+      return "✅ Відключень не заплановано"
+    } else {
+      return "⏳ Дані поки що недоступні"
+    }
+  }
+
+  return result
 }
 
 function parseFactualOutages(info, house) {
@@ -274,11 +311,11 @@ function getQueueFromGraph(info) {
     return `${day}.${month}`
   }
 
-  const separator = "═".repeat(50)
+  const separator = "━"
 
   let tomorrowText = ""
   if (hasTomorrowData) {
-    tomorrowText = formatScheduleIntervals(tomorrowIntervals)
+    tomorrowText = formatScheduleIntervals(tomorrowIntervals, true, false)
   } else {
     tomorrowText = "⏳ Графік на завтра ще не доступний (зазвичай з'являється ввечері)"
   }
@@ -292,7 +329,7 @@ function getQueueFromGraph(info) {
     ``,
     `📅 <b>Графік на сьогодні (${formatDate(today)}):</b>`,
     ``,
-    formatScheduleIntervals(todayIntervals),
+    formatScheduleIntervals(todayIntervals, true, true),
     ``,
     separator,
     ``,
@@ -311,50 +348,53 @@ function getQueueFromGraph(info) {
 
 async function sendNotification(message) {
   if (!TELEGRAM_BOT_TOKEN)
-    throw Error("❌ Missing telegram bot token or chat id.")
-  if (!TELEGRAM_CHAT_ID) throw Error("❌ Missing telegram chat id.")
+    throw Error("❌ Missing telegram bot token.")
+  if (CHAT_IDS.length === 0)
+    throw Error("❌ Missing telegram chat ids.")
 
   console.log("🌀 Sending notification...")
   console.log("📨 Message length:", message.length)
 
-  const lastMessage = loadLastMessage() || {}
-  try {
-    const endpoint = lastMessage.message_id ? "editMessageText" : "sendMessage"
-    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/${endpoint}`
+  for (const chatId of CHAT_IDS) {
+    const lastMessage = loadLastMessage(chatId) || {}
+    try {
+      const endpoint = lastMessage.message_id ? "editMessageText" : "sendMessage"
+      const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/${endpoint}`
 
-    console.log(`📤 Using endpoint: ${endpoint}`)
-    console.log(`💬 Chat ID: ${TELEGRAM_CHAT_ID}`)
+      console.log(`📤 Using endpoint: ${endpoint}`)
+      console.log(`💬 Chat ID: ${chatId}`)
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: TELEGRAM_CHAT_ID,
-        text: message,
-        parse_mode: "HTML",
-        message_id: lastMessage.message_id ?? undefined,
-      }),
-    })
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: message,
+          parse_mode: "HTML",
+          message_id: lastMessage.message_id ?? undefined,
+        }),
+      })
 
-    const data = await response.json()
+      const data = await response.json()
 
-    if (!response.ok) {
-      console.error("🔴 Telegram API error:", data)
-      throw new Error(`Telegram API error: ${data.description}`)
+      if (!response.ok) {
+        console.error(`🔴 Telegram API error for chat ${chatId}:`, data)
+        throw new Error(`Telegram API error: ${data.description}`)
+      }
+
+      if (data.ok && data.result) {
+        saveLastMessage(data.result, chatId)
+        console.log(`🟢 Notification sent to chat ${chatId}!`)
+        console.log("✉️ Message ID:", data.result.message_id)
+      } else {
+        console.error("🔴 Unexpected response:", data)
+        throw new Error("Unexpected Telegram API response")
+      }
+    } catch (error) {
+      console.error(`🔴 Notification not sent to chat ${chatId}:`, error.message)
+      deleteLastMessage(chatId)
+      throw error
     }
-
-    if (data.ok && data.result) {
-      saveLastMessage(data.result)
-      console.log("🟢 Notification sent successfully!")
-      console.log("✉️ Message ID:", data.result.message_id)
-    } else {
-      console.error("🔴 Unexpected response:", data)
-      throw new Error("Unexpected Telegram API response")
-    }
-  } catch (error) {
-    console.error("🔴 Notification not sent:", error.message)
-    deleteLastMessage()
-    throw error
   }
 }
 
