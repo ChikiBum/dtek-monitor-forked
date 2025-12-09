@@ -267,7 +267,7 @@ function getQueueFromGraph(info) {
   try {
     const endpoint = lastMessage.message_id ? "editMessageText" : "sendMessage"
     const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/${endpoint}`
-    
+
     console.log(`📤 Using endpoint: ${endpoint}`)
     console.log(`💬 Chat ID: ${TELEGRAM_CHAT_ID}`)
 
@@ -283,7 +283,7 @@ function getQueueFromGraph(info) {
     })
 
     const data = await response.json()
-    
+
     if (!response.ok) {
       console.error("🔴 Telegram API error:", data)
       throw new Error(`Telegram API error: ${data.description}`)
@@ -308,10 +308,10 @@ async function run() {
   try {
     console.log("🚀 Starting DTEK Monitor...")
     const info = await getInfo()
-    
+
     console.log("📊 Info received successfully")
     console.log("🔍 Queue:", info.data?.[HOUSE]?.sub_type_reason?.[0] || "Unknown")
-    
+
     const message = generateMessage(info)
     console.log("✉️ Message generated successfully")
 
