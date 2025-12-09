@@ -357,14 +357,14 @@ async function sendNotification(message) {
 
   for (const chatId of CHAT_IDS) {
     const lastMessage = loadLastMessage(chatId) || {}
+    let endpoint = lastMessage.message_id ? "editMessageText" : "sendMessage"
+    let url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/${endpoint}`
+
+    console.log(`📤 Using endpoint: ${endpoint}`)
+    console.log(`💬 Chat ID: ${chatId}`)
+
     try {
-      const endpoint = lastMessage.message_id ? "editMessageText" : "sendMessage"
-      const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/${endpoint}`
-
-      console.log(`📤 Using endpoint: ${endpoint}`)
-      console.log(`💬 Chat ID: ${chatId}`)
-
-      const response = await fetch(url, {
+      let response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -375,7 +375,28 @@ async function sendNotification(message) {
         }),
       })
 
-      const data = await response.json()
+      let data = await response.json()
+
+      // Якщо editMessageText не знайшло повідомлення - відправляємо нове
+      if (!response.ok && data.description?.includes("message to edit not found")) {
+        console.log(`⚠️ Message not found, sending new message...`)
+        deleteLastMessage(chatId)
+        
+        endpoint = "sendMessage"
+        url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/${endpoint}`
+        
+        response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: message,
+            parse_mode: "HTML",
+          }),
+        })
+        
+        data = await response.json()
+      }
 
       if (!response.ok) {
         console.error(`🔴 Telegram API error for chat ${chatId}:`, data)
